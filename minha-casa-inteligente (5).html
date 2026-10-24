@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minha Casa Inteligente</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"></script>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --txt:#e2e8f0; --mut:#94a3b8; --azul:#3b82f6; --verde:#22c55e; --verm:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:16px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  h1 { margin:0; font-size:22px; }
+  .pill { padding:4px 12px; border-radius:20px; font-size:13px; background:var(--verm); color:#fff; }
+  .pill.on { background:var(--verde); }
+  main { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; padding:0 20px 20px; }
+  .card { background:var(--card); border-radius:14px; padding:16px; }
+  .card h2 { margin:0 0 10px; font-size:16px; color:var(--mut); font-weight:600; }
+  .wide { grid-column:1/-1; }
+  button { border:0; border-radius:10px; padding:10px 14px; font-weight:700; cursor:pointer; color:#fff; background:var(--azul); }
+  button.cinza { background:#475569; }
+  .dev { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #334155; }
+  .dev:last-child { border:0; }
+  .sw { width:52px; height:28px; border-radius:20px; background:#475569; position:relative; cursor:pointer; flex:none; }
+  .sw::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:.2s; }
+  .sw.on { background:var(--verde); }
+  .sw.on::after { left:27px; }
+  .tank { height:150px; border:3px solid #64748b; border-radius:8px; position:relative; overflow:hidden; background:#0b1220; margin-bottom:10px; }
+  #agua { position:absolute; bottom:0; width:100%; height:0; background:var(--azul); transition:height .6s; }
+  #mark { position:absolute; width:100%; border-top:2px dashed var(--verm); }
+  #nivelTxt { position:absolute; inset:0; display:grid; place-items:center; font-size:30px; font-weight:800; }
+  label { display:block; font-size:12px; color:var(--mut); margin-top:8px; }
+  input { width:100%; padding:8px; border-radius:8px; border:1px solid #475569; background:#0f172a; color:var(--txt); margin-top:3px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  #log { font-size:12px; height:110px; overflow:auto; background:#020617; color:#86efac; padding:8px; border-radius:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏠 Minha Casa Inteligente</h1>
+  <span id="stCon" class="pill">desconectado</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>💧 Caixa d'água</h2>
+    <div class="tank"><div id="agua"></div><div id="mark"></div><div id="nivelTxt">--%</div></div>
+    <div>Bomba: <b id="stBomba">DESLIGADA</b> · Modo: <b id="stModo">AUTOMÁTICO</b></div>
+    <div class="row">
+      <button id="btn-automacao">AUTOMAÇÃO: LIGADA</button>
+      <button id="btnLigar" class="cinza">Ligar</button>
+      <button id="btnDesligar" class="cinza">Desligar</button>
+    </div>
+    <label>Nível máximo % (bomba desliga)<input id="alvo" type="number" value="100"></label>
+    <label>Queda para ligar a bomba %<input id="queda" type="number" value="30"></label>
+  </section>
+
+  <section class="card">
+    <h2>💡 Dispositivos</h2>
+    <div id="devs"></div>
+  </section>
+
+  <section class="card">
+    <h2>🎛️ Ações rápidas</h2>
+    <div class="row" style="margin-top:0">
+      <button id="btnTvOn" style="flex:1;background:var(--verde)">📺 Ligar TV</button>
+      <button id="btnTvOff" class="cinza" style="flex:1">📺 Desligar TV</button>
+    </div>
+    <div class="row">
+      <button id="btnArOn" style="flex:1;background:var(--verde)">❄️ Ligar ar do quarto</button>
+      <button id="btnArOff" class="cinza" style="flex:1">❄️ Desligar ar</button>
+    </div>
+    <div class="row">
+      <button id="btnArOn" style="flex:1;background:var(--verde)">❄️ Ligar ar do quarto</button>
+      <button id="btnArOff" class="cinza" style="flex:1">❄️ Desligar ar</button>
+    </div>
+    <div style="margin-top:14px">🚪 Portão: <b id="stPortao">--</b></div>
+    <div class="row" style="margin-top:6px">
+      <button id="btnPortaoAbrir" style="flex:1;padding:14px;background:var(--verde)">🔓 Abrir portão</button>
+      <button id="btnPortaoFechar" style="flex:1;padding:14px;background:var(--verm)">🔒 Fechar portão</button>
+    </div>
+    <small style="color:var(--mut);display:block;margin-top:8px">O portão pede confirmação antes de abrir ou fechar.</small>
+  </section>
+
+  <section class="card">
+    <h2>⚙️ Conexão MQTT</h2>
+    <label>URL do broker (WebSocket)<input id="url" value="wss://broker.hivemq.com:8884/mqtt"></label>
+    <label>Usuário<input id="user"></label>
+    <label>Senha<input id="pass" type="password"></label>
+    <label>Prefixo dos tópicos<input id="pref" value="minhacasa"></label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt)">
+      <input id="autoCon" type="checkbox" checked style="width:auto;margin:0"> Lembrar dados e conectar automaticamente ao abrir
+    </label>
+    <div class="row">
+      <button id="btnCon">Conectar</button>
+      <button id="btnEsq" class="cinza">Esquecer dados</button>
+    </div>
+  </section>
+
+  <section class="card wide"><h2>Log</h2><div id="log"></div></section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Edite aqui seus dispositivos: nome e subtópico (publica ON/OFF em prefixo/subtopico)
+const DISPOSITIVOS = [
+  { nome: "💡 Luz da sala",   sub: "sala/luz" },
+  { nome: "💡 Luz do quarto", sub: "quarto/luz" },
+  { nome: "💡 Luz da área",   sub: "area/luz" },
+  { nome: "🌀 Ventilador",    sub: "sala/ventilador" }
+];
+
+let client = null, auto = true, bomba = false, nivel = null;
+const estado = {};
+
+function log(m) {
+  const l = $("log");
+  l.innerHTML += new Date().toLocaleTimeString() + " " + m + "<br>";
+  l.scrollTop = l.scrollHeight;
+}
+const T = sub => $("pref").value.replace(/\/$/, "") + "/" + sub;
+const pub = (topico, msg) => { if (client && client.connected) client.publish(topico, msg, { retain: true }); else log("Sem conexão"); };
+
+// ---------- Dispositivos ----------
+function desenharDevs() {
+  $("devs").innerHTML = "";
+  DISPOSITIVOS.forEach(d => {
+    const row = document.createElement("div");
+    row.className = "dev";
+    row.innerHTML = `<span>${d.nome}</span><div class="sw" id="sw-${d.sub.replace("/", "-")}"></div>`;
+    row.querySelector(".sw").onclick = () => {
+      const novo = !estado[d.sub];
+      pub(T(d.sub), novo ? "ON" : "OFF");
+      setDev(d.sub, novo);
+      log(d.nome + " " + (novo ? "ON" : "OFF"));
+    };
+    $("devs").appendChild(row);
+  });
+}
+function setDev(sub, on) {
+  estado[sub] = on;
+  const el = $("sw-" + sub.replace("/", "-"));
+  if (el) el.classList.toggle("on", on);
+}
+
+// ---------- Caixa d'água ----------
+function setBomba(on, motivo) {
+  bomba = on;
+  $("stBomba").textContent = on ? "LIGADA" : "DESLIGADA";
+  pub(T("caixa/bomba"), on ? "ON" : "OFF");
+  log("Bomba " + (on ? "ON" : "OFF") + " (" + motivo + ")");
+}
+function avaliar() {
+  if (!auto || nivel === null) return;
+  const alvo = +$("alvo").value, queda = +$("queda").value, liga = alvo - queda;
+  if (!bomba && nivel <= liga) setBomba(true, "nível " + nivel + "% <= " + liga + "%");
+  else if (bomba && nivel >= alvo) setBomba(false, "nível " + nivel + "% chegou a " + alvo + "%");
+}
+function mostrarNivel() {
+  $("agua").style.height = nivel + "%";
+  $("nivelTxt").textContent = nivel + "%";
+  $("mark").style.bottom = (+$("alvo").value - +$("queda").value) + "%";
+}
+function modo(a) {
+  auto = a;
+  $("btn-automacao").textContent = "AUTOMAÇÃO: " + (a ? "LIGADA" : "DESLIGADA");
+  $("stModo").textContent = a ? "AUTOMÁTICO" : "MANUAL";
+}
+$("btn-automacao").onclick = () => { modo(!auto); if (auto) avaliar(); };
+$("btnLigar").onclick = () => { modo(false); setBomba(true, "manual"); };
+$("btnDesligar").onclick = () => { modo(false); setBomba(false, "manual"); };
+["alvo", "queda"].forEach(i => $(i).oninput = () => { if (nivel !== null) { mostrarNivel(); avaliar(); } });
+
+// ---------- MQTT ----------
+$("btnCon").onclick = () => {
+  salvarConfig();
+  if (client) client.end(true);
+  client = mqtt.connect($("url").value, {
+    username: $("user").value || undefined,
+    password: $("pass").value || undefined,
+    reconnectPeriod: 3000
+  });
+  client.on("connect", () => {
+    $("stCon").textContent = "conectado";
+    $("stCon").classList.add("on");
+    client.subscribe(T("caixa/nivel"));
+    client.subscribe(T("garagem/portao/estado"));
+    DISPOSITIVOS.forEach(d => client.subscribe(T(d.sub)));
+    log("Conectado. Nível em: " + T("caixa/nivel"));
+  });
+  client.on("close", () => { $("stCon").textContent = "desconectado"; $("stCon").classList.remove("on"); });
+  client.on("error", e => log("Erro: " + e.message));
+  client.on("message", (topico, msg) => {
+    const txt = msg.toString();
+    if (topico === T("caixa/nivel")) {
+      const v = parseFloat(txt);
+      if (isNaN(v)) return;
+      nivel = Math.max(0, Math.min(100, v));
+      mostrarNivel();
+      avaliar();
+      return;
+    }
+    if (topico === T("garagem/portao/estado")) {
+      $("stPortao").textContent = txt.toUpperCase();
+      log("Portão: " + txt);
+      return;
+    }
+    const d = DISPOSITIVOS.find(x => T(x.sub) === topico);
+    if (d) setDev(d.sub, txt.toUpperCase() === "ON");
+  });
+};
+
+// ---------- Ações rápidas (comandos pontuais, sem retain) ----------
+function cmd(sub, msg, texto) {
+  if (client && client.connected) {
+    client.publish(T(sub), msg, { retain: false });
+    log(texto);
+  } else {
+    log("Sem conexão: comando não enviado");
+  }
+}
+$("btnTvOn").onclick  = () => cmd("sala/tv", "ON", "TV: ligar");
+$("btnTvOff").onclick = () => cmd("sala/tv", "OFF", "TV: desligar");
+$("btnArOn").onclick  = () => cmd("quarto/ar", "ON", "Ar do quarto: ligar");
+$("btnArOff").onclick = () => cmd("quarto/ar", "OFF", "Ar do quarto: desligar");
+$("btnPortaoAbrir").onclick = () => {
+  if (confirm("Abrir o portão agora?")) cmd("garagem/portao", "ABRIR", "Portão: abrir");
+};
+$("btnPortaoFechar").onclick = () => {
+  if (confirm("Fechar o portão agora?")) cmd("garagem/portao", "FECHAR", "Portão: fechar");
+};
+
+// ---------- Login automático ----------
+const CHAVE = "casa-inteligente-config";
+const CAMPOS = ["url", "user", "pass", "pref", "alvo", "queda"];
+
+function salvarConfig() {
+  try {
+    if ($("autoCon").checked) {
+      const cfg = { autoCon: true };
+      CAMPOS.forEach(c => cfg[c] = $(c).value);
+      localStorage.setItem(CHAVE, JSON.stringify(cfg));
+    } else {
+      localStorage.removeItem(CHAVE);
+    }
+  } catch (e) { log("Não foi possível salvar os dados"); }
+}
+
+function carregarConfig() {
+  try {
+    const cfg = JSON.parse(localStorage.getItem(CHAVE) || "null");
+    if (!cfg) return false;
+    CAMPOS.forEach(c => { if (cfg[c] !== undefined) $(c).value = cfg[c]; });
+    $("autoCon").checked = !!cfg.autoCon;
+    return !!cfg.autoCon;
+  } catch (e) { return false; }
+}
+
+$("btnEsq").onclick = () => {
+  try { localStorage.removeItem(CHAVE); } catch (e) {}
+  $("user").value = ""; $("pass").value = "";
+  $("autoCon").checked = false;
+  log("Dados salvos apagados");
+};
+["alvo", "queda"].forEach(i => $(i).addEventListener("change", salvarConfig));
+
+desenharDevs();
+if (carregarConfig()) { log("Conectando automaticamente..."); $("btnCon").click(); }
+</script>
+</body>
+</html>
